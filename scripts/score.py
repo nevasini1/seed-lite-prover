@@ -61,7 +61,7 @@ def main() -> int:
         lines.append(
             f"_Run {m.get('timestamp', '?')} · git {m.get('git_sha', '?')[:8]}"
             f"{' (dirty)' if m.get('git_dirty') else ''} · "
-            f"lean {m.get('lean_version', '?').splitlines()[0][:40]} · "
+            f"lean {(m.get('lean_version') or '?').splitlines()[0][:40] if m.get('lean_version') else m.get('lean_toolchain', '?')} · "
             f"backend {m.get('lean_backend', '?')} · "
             f"cache-mode {m.get('cache_mode', '?')} · "
             f"prover {m.get('prover_model', '?')}_"

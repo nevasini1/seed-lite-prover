@@ -145,11 +145,24 @@ class LeanRepl:
 
     # -- public API ----------------------------------------------------------
 
-    def warmup(self, preamble: str) -> _ReplResult:
+    def warmup(self, preamble: str, timeout_s: float | None = None) -> _ReplResult:
         """Submit a preamble (typically `import Mathlib` + `open ...`) to
         prime the REPL env. The resulting `env` id is reused on every
-        subsequent `check()` so Mathlib only loads once per process."""
-        res = self._send({"cmd": preamble})
+        subsequent `check()` so Mathlib only loads once per process.
+
+        Warmup uses a SEPARATE, more generous timeout from per-call checks:
+        loading Mathlib's .olean cache takes ~30–90s even from a warm
+        filesystem, and the per-call timeout (~30s in typical configs) is
+        far too tight. Falls back to `max(300, self.timeout_s * 5)` if no
+        explicit `timeout_s` is passed.
+        """
+        warmup_budget = timeout_s if timeout_s is not None else max(300.0, self.timeout_s * 5)
+        saved = self.timeout_s
+        self.timeout_s = warmup_budget
+        try:
+            res = self._send({"cmd": preamble})
+        finally:
+            self.timeout_s = saved
         self._warmup_env = res.env
         return res
 
