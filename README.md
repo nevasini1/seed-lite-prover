@@ -10,10 +10,10 @@ The claim: *same small model, same MacBook, no fine-tuning — but a higher Lean
 
 Apples-to-apples, **variant A** held constant before vs. after the wrapper. Same models (`zeyu-zheng/BFS-Prover-V2-7B:q8_0` + `mradermacher/Kimina-Prover-RL-1.7B-GGUF:Q8_0`), same hardware (Apple M3, 16 GB), no training of any kind.
 
-| Benchmark slice | n | **Baseline pass rate** | **Post-wrapper pass rate** | **Lift** |
-|---|---:|---:|---:|---:|
-| `minif2f_induction` (curated) | 8 | 0/8 (0%) | **3/8 (37.5%)** | **+37.5 pp** |
-| `minif2f_valid` (MiniF2F validation) | 20 | 5/20 (25%) | **6/20 (30%)** | **+5 pp** |
+| Benchmark slice | n | **Baseline (A)** | **A + case_closer/tail_closer** | **Fmin (full agentic loop)** | **Best lift** |
+|---|---:|---:|---:|---:|---:|
+| `minif2f_induction` (curated) | 8 | 0/8 (0%) | 3/8 (37.5%) | **4/8 (50.0%)** | **+50.0 pp** |
+| `minif2f_valid` (MiniF2F validation) | 20 | 5/20 (25%) | **6/20 (30%)** | not measured at n=20 | **+5 pp** |
 
 ```
                               MiniF2F-induction                  MiniF2F-valid
@@ -22,10 +22,13 @@ Apples-to-apples, **variant A** held constant before vs. after the wrapper. Same
          Baseline (A)         ░░░░░░░░░░░░░░░░░  0%          ████████░░░░░░░░░ 25%
                               0/8                            5/20
 
-  Post-wrapper (A + closers)  █████████░░░░░░░░ 37.5%        █████████░░░░░░░░ 30%
+  A + case_closer / tail_closer █████████░░░░░░░░  37.5%       █████████░░░░░░░░ 30%
                               3/8                            6/20
 
-                              ▲ +37.5 pp                     ▲ +5 pp
+  Fmin (full agentic loop)    ████████████░░░░░░  50.0%       (not measured)
+                              4/8
+
+                              ▲ +50.0 pp                    ▲ +5 pp
 ```
 
 ### Where the lift actually came from (per-source attribution)
@@ -140,6 +143,8 @@ Each variant runs the following pipeline against one Lean theorem; the first ste
 
 ### Variant matrix (`configs/ablation_matrix.yaml`)
 
+Every variant runs **steps 0–2** (symbolic preamble + best-of-N whole_proof + case_closer/tail_closer); the ✓ columns enable **steps 3–6** in the pipeline diagram above.
+
 ```
 Variant │ samples │ search │ retrieval │ decompose │ repair │ Purpose
 ────────┼─────────┼────────┼───────────┼───────────┼────────┼──────────────────────────
@@ -153,7 +158,43 @@ Variant │ samples │ search │ retrieval │ decompose │ repair │ Purpos
    Fmin │    3    │   ✓    │     ✓     │     ✓     │   ✓    │ Memory-conscious F
 ```
 
-Each variant runs steps 0–2 (symbolic + whole_proof + closers); the ✓ columns enable steps 3–6.
+#### Per-variant descriptions
+
+**A — `one_shot` (baseline floor)**
+The cleanest baseline. Runs the 18-tactic symbolic preamble (`simp_all`, `omega`, `linarith`, `nlinarith`, `ring_nf`, `aesop`, `decide`, plus 7 induction-aware combinators), then **one** whole_proof attempt from BFS-Prover-V2 at temperature ~0.2. If that fails with an unsolved-case error, case_closer/tail_closer fire as mechanical fall-back. Per-problem wall-clock: ~2–10 s. Use this as the floor for any lift claim.
+
+**A6 — `best_of_6` (today's recommended setting)**
+Identical to A except `samples: 6` — BFS gets 6 chances at temperatures `[0.20, 0.25, 0.30, 0.35, 0.40, 0.45]`, each followed by its own case_closer/tail_closer patch loop. The single highest-payoff change you can make on this stack: cheap (no model swap), bounded (~30 s/problem worst-case), and earned the only new AIME solve on the valid slice (`aime_1991_p1`). Per-problem: ~2–60 s.
+
+**B — `best_of_32` (best-of-N sampling baseline)**
+Pure sampling test: 32 BFS whole_proof shots at varied temperature, no search/retrieval/decompose/repair. Measures *how much of the lift attributable to the wrapper is actually just temperature variance in BFS sampling*. **Slow** (~30–120 s/problem) but isolates the sampling-only contribution.
+
+**C — `tactic_search` (+ Lean-checked BFS)**
+Variant A + step 3 (`tactic_search.py` / `proof_tree.py`). Persistent Lean REPL keeps Mathlib loaded; for each unsolved goal state, samples k=5 tactics from BFS-Prover-V2, applies them via the REPL, scores nodes (depth + temperature proxy as cumulative-logprob stand-in), expands best-first. `search_depth: 8`, `search_budget_s: 300`. Empirical result so far: **same wins as A** on tested slices — BFS-search has not earned a unique attribution.
+
+**D — `search_plus_retrieval` (+ Mathlib retrieval)**
+Variant C + step 4 (`retrieval.py`). On each tactic-search prompt, top-`retrieval_k: 20` relevant Mathlib lemmas (and verified-lemma-cache hits) are injected from the 141 k-decl index built by `scripts/build_mathlib_index.py`. Retrieval mechanism *works* (lemmas appear in BFS's prompt) but BFS doesn't reliably act on them — variant D has not yet earned a unique attribution over C.
+
+**E — `plus_decomposition` (+ Seed-style have-chain decomposition)**
+Variant D + step 5 (`decompose.py`). When earlier steps fail, Kimina-Prover-RL-1.7B is asked (`/api/chat` + `<|im_start|>` template, 3072-token budget for thinking + content) to produce a chain of `have <name> : <type>` sub-lemma signatures bridging the goal. Each sub-lemma is parse-checked via `lean_snippets.parses_in_parent`, then recursively proven with `use_decomposition=False, use_repair=False` (depth 2 max). Successful sub-proofs are stitched back as a `have ...` block. **Has not earned an attributable win** to date — decomposed have-chains often fail to parse or stitch cleanly.
+
+**F — `full_seed_lite` (full agentic loop)**
+Variant E + step 6 (`repair.py`). On final failures: up to `repair_max_rounds: 3` of (a) targeted LLM patches — feed `(failing proof, Lean error)` to Kimina, ask for minimal correction; or (b) on the final round, Dynamic Replanning — fresh have-chain bridging existing progress to the goal. **OOM-crashes on n>6 problems on 16 GB hardware** (BFS-q8 + Kimina + Lean REPL + Python all resident). Per-problem wall-clock: 240–430 s. Repair has not earned an attributable win where it has completed.
+
+**Fmin — `seed_lite_minimal` (memory-conscious F)**
+Same components as F but with shrunken budgets: `samples: 3`, `search_depth: 3`, `search_budget_s: 60`, `decomp_max_depth: 1`, `decomp_max_lemmas: 3`, `repair_max_rounds: 2`. This is the F config that actually **completes a full run on 16 GB**. Today's best induction result (`4/8 = 50%`) was Fmin — though the new fourth solve was earned by BFS whole_proof at higher sampling, not by LLM repair.
+
+#### Which variant to run when
+
+| Goal | Use |
+|---|---|
+| Fastest baseline number for the floor | A |
+| Best honest "no-search" number | A6 — the cheap improvement over A |
+| Test if BFS sampling alone explains a lift | B (compare to A) |
+| Test the structured-search hypothesis | C (compare to A6) |
+| Test if retrieval helps | D (compare to C) |
+| Test if decomposition helps long proofs | E (compare to D) |
+| The whole pitch — full agentic loop | F (on small n) or Fmin (larger n) |
 
 ### Component map
 
