@@ -38,13 +38,75 @@ _GOALS_ATTR = "_goals"
 
 
 def _parse_tactic(raw: str) -> str:
+    """Extract a tactic from a model response.
+
+    Accepts multi-line tactic blocks (the previous single-line behaviour
+    discarded valid `induction ... with | zero => ... | succ ... => ...`
+    blocks). Strategy:
+      1. Strip leading/trailing code fences.
+      2. If the raw content is a fenced block, take it whole.
+      3. Otherwise, take consecutive non-empty lines from the start until
+         we hit a blank line, an `--` comment-only line, or obvious chatter
+         ("Note:", "Here", "We", etc. starting a line).
+      4. Trim trailing blank lines and any trailing prose.
+    """
     raw = raw.strip()
-    for fence in ("```lean", "```"):
-        if raw.startswith(fence):
-            raw = raw[len(fence):].strip()
-    if raw.endswith("```"):
-        raw = raw[:-3].strip()
-    return raw.splitlines()[0].strip() if raw else ""
+    # Fenced block: extract the content between ```lean / ``` markers
+    if raw.startswith("```"):
+        # Skip the opening fence line
+        nl = raw.find("\n")
+        if nl >= 0:
+            inner = raw[nl + 1:]
+        else:
+            inner = raw[3:]
+        # Drop trailing fence
+        if "```" in inner:
+            inner = inner[: inner.index("```")]
+        raw = inner.strip()
+
+    out_lines: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if out_lines:
+                break  # blank line ends the tactic
+            continue
+        # Obvious prose markers — stop accumulating
+        if any(stripped.startswith(prefix) for prefix in (
+            "Note:", "Here ", "We ", "This ", "The ", "Explanation:", "Hence", "Therefore",
+        )) and out_lines:
+            break
+        # Pure comment lines
+        if stripped.startswith("--") and not out_lines:
+            continue
+        out_lines.append(line.rstrip())
+    return "\n".join(out_lines).strip()
+
+
+def _goal_count(goals_text: str) -> int:
+    """Estimate remaining goal count from REPL's rendered goal text.
+    Each goal block begins with `⊢ ...`; counting turnstiles is robust."""
+    return sum(1 for ln in (goals_text or "").splitlines() if ln.lstrip().startswith("⊢"))
+
+
+def _progress_score(parent_goals: str, child_goals: str, child_done: bool, elapsed_s: float) -> float:
+    """Higher = better. Used to rank ProofTree nodes for best-first expansion.
+
+    Replaces the temperature-ladder logprob proxy. Signals:
+      * If the tactic CLOSED the proof → very high
+      * Fewer remaining goals than parent → reward proportional to delta
+      * Shorter total goal text → reward (proxy for "simpler state")
+      * Faster Lean check → small reward (cheap nodes preferred)
+    Negative on regressions (more goals than parent).
+    """
+    if child_done:
+        return 1e6
+    pg = _goal_count(parent_goals)
+    cg = _goal_count(child_goals)
+    score = 100.0 * (pg - cg)                # +100 per goal closed
+    score -= 0.01 * max(0, len(child_goals or ""))   # smaller state = better
+    score -= max(0.0, elapsed_s) * 0.5       # cheaper tactic = slightly better
+    return score
 
 
 def _format_goal_prompt(problem: LeanProblem, goals_text: str, retrieved: str = "") -> str:
@@ -129,7 +191,12 @@ def bfs_prove(orc: "Orchestrator", problem: LeanProblem) -> tuple[bool, str, lis
             t0 = time.time()
             ps = orc.lean.apply_tactic(state_id, tac)
             dt = time.time() - t0
-            edge_logprob = -float(i) - (temp * 0.5)
+            # Progress-based score replaces the temperature-ladder logprob
+            # proxy. Higher = better; used to rank nodes for best-first
+            # expansion via ProofTree.attach_child(edge_logprob=...).
+            parent_goals = getattr(node, _GOALS_ATTR, "") or ""
+            child_goals = ps.goals if ps else ""
+            edge_logprob = _progress_score(parent_goals, child_goals, bool(ps.done if ps else False), dt)
             new_prefix = node.prefix + (tac,)
 
             if ps.done:

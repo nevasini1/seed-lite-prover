@@ -49,8 +49,18 @@ down complex arguments into simpler components.
 16. **Final Check**: before outputting, re-check every rule above.
 
 # Output Format
-Lines starting with `have`, one statement per line. NO `:=`, NO `by`, NO commentary,
-NO Markdown fences.
+First, lines starting with `have <name> : <type>` (or `suffices <name> : <type>`).
+NO `:=`, NO `by`, NO commentary inside those lines.
+
+Then, on a NEW line, the literal token `ASSEMBLY:` followed by a one-line Lean
+tactic that closes the **original goal** assuming each `<name>` above is in
+scope as a proven hypothesis. Examples of useful assembly tactics:
+  ASSEMBLY: exact h1.trans h2
+  ASSEMBLY: linarith [h1, h2, h3]
+  ASSEMBLY: simp [h1, h2]
+  ASSEMBLY: omega
+
+The assembly is REQUIRED — without it the plan cannot be checked.
 
 # Examples
 {examples}
@@ -70,6 +80,7 @@ have h2 : Real.sin x ^ 2 = 25 * Real.cos x ^ 2
 have h3 : 26 * Real.cos x ^ 2 = 1
 have hsin2x_val : Real.sin (2 * x) = (5 : ℝ) / (13 : ℝ)
 have hcos2x_val : Real.cos (2 * x) = -(12 : ℝ) / (13 : ℝ)
+ASSEMBLY: rw [hsin2x_val, hcos2x_val]; norm_num
 """
 
 

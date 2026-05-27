@@ -82,6 +82,20 @@ And **not yet**:
 
 The remaining open work (in *Next steps*) is to make F's LLM-driven repair actually fire at scale — that's the real test of the agentic-loop claim.
 
+### Follow-up review fixes (second pass)
+
+After the soundness/cache/deadline/reproducibility batch above, the deeper review items got their own pass:
+
+| # | Issue | Fix |
+|---|---|---|
+| **#5** | Tactic search dropped multi-line tactics (only the first line was kept) and ranked nodes by a fake temperature-ladder logprob proxy | `tactic_search._parse_tactic` now accepts both fenced and unfenced multi-line tactic blocks (handles `induction ... with \| zero => ... \| succ ... =>` correctly). New `_progress_score(parent_goals, child_goals, done, elapsed_s)` ranks BFS nodes by Lean-observable signals — change in goal count and goal-text length, with a small elapsed-cost penalty — replacing the temperature proxy. |
+| **#6** | Decomposition relied on a generic glue-tactic fallback that almost never closed parents (0 attributable wins across 17+ runs) | The planner prompt now demands an explicit `ASSEMBLY:` line — a concrete tactic that closes the parent goal given the haves are in scope. `decompose._parse_have_chain` returns `(haves, assembly)`. `decompose_and_prove` tries the planner's assembly first, then the legacy generic glue, with per-tag attribution (`decompose:dN:planner_assembly` vs `decompose:dN:fallback_glue`). Also accepts `suffices` blocks and single-have plans (previously needed ≥ 2). |
+| **#7** | Repair seeded on `max(len(proof))` — a long hallucinated proof beat a short near-miss | New `_closeness_score(attempt)`: structured `unsolved goals` errors get +100, each remaining `case` −10, each remaining `⊢` goal −5, syntax errors −100, unknown identifiers −50, with a length penalty. Repair now picks the most-promising failure, not the longest. Unit-tested: a 20-char near-miss beats a 160-char syntax-error blob. |
+| **#9** | REPL vs subprocess could disagree on stripped `import`/`open`/`namespace` lines | New `scripts/test_repl_subprocess_parity.py` runs 7 fixture snippets (real proof, sorry, admit, Mathlib `omega`, BigOperators sum, syntax error, unknown identifier) through both backends and reports divergences. First run surfaced 2 known divergences (documented inline in the script as Lean-API surface issues for further investigation). |
+| **#12** | n=8/20 with no uncertainty quantification | `scripts/score.py` now emits 95 % Wilson confidence intervals per variant (correct at k=0 and k=n where the normal approximation breaks) and a paired-comparison McNemar-style table when ≥2 variants ran on the same problem set: per-pair `(A-only wins, B-only wins, both, neither, A→B Δ in pp)`. Also skips the `_type: run_metadata` header line. |
+
+The only remaining review item is the actual **n ≥ 50 rerun** under the new isolated caches + sorry-banning + closeness-seeded repair. That's a multi-hour ablation rather than a code change — captured under *Next steps → P4*.
+
 ---
 
 ## Final results table

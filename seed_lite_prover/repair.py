@@ -39,6 +39,46 @@ fences, no commentary, no leading `theorem ... := by` line.
 """
 
 
+# Patterns used to score "closeness" of a failing attempt — see _closeness_score.
+_UNSOLVED_CASES_RE = re.compile(r"^case\s+[A-Za-z_][\w']*\s*$", re.MULTILINE)
+_UNKNOWN_IDENT_RE = re.compile(r"\bunknown identifier\b|\bunknown constant\b", re.IGNORECASE)
+_UNEXPECTED_RE = re.compile(r"\bunexpected token\b|\bsyntax error\b", re.IGNORECASE)
+_GOAL_TURNSTILE_RE = re.compile(r"^\s*⊢\s+", re.MULTILINE)
+
+
+def _closeness_score(attempt) -> float:
+    """Higher = closer to a clean Lean proof. Used to pick the most-promising
+    failing attempt as the seed for repair. Signals (in priority order):
+       * type errors that are merely 'unsolved goals' (not unknown-ident /
+         syntax) score highest — the model got the structure right
+       * fewer unsolved cases is better
+       * fewer remaining goals (estimated from `⊢` lines) is better
+       * shorter error message is better (a tight error means a small fix)
+       * non-empty proof body required (already filtered upstream)
+    """
+    err = attempt.error or ""
+    score = 0.0
+    if not err:
+        return -1e6
+    # Heavy penalty: model output never even compiled in any way
+    if _UNEXPECTED_RE.search(err):
+        score -= 100.0
+    if _UNKNOWN_IDENT_RE.search(err):
+        score -= 50.0
+    # Reward: stuck on the structured 'unsolved goals' shape (most patchable)
+    if "unsolved goals" in err.lower():
+        score += 100.0
+    # Fewer unsolved cases is closer to done
+    n_cases = len(_UNSOLVED_CASES_RE.findall(err))
+    score -= 10.0 * n_cases
+    # Fewer remaining goal turnstiles is closer to done
+    n_goals = len(_GOAL_TURNSTILE_RE.findall(err))
+    score -= 5.0 * n_goals
+    # Shorter error = tighter fix target
+    score -= min(len(err) / 100.0, 20.0)
+    return score
+
+
 _FENCE_LEAD = re.compile(r"^```(?:lean)?\s*", re.IGNORECASE)
 _FENCE_TAIL = re.compile(r"\s*```\s*$")
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -76,7 +116,13 @@ def repair_last_failure(
     candidates = [a for a in prior_attempts if not a.ok and a.error and a.proof.strip()]
     if not candidates:
         return False, "", out
-    seed = max(candidates, key=lambda a: len(a.proof))
+
+    # Pick the attempt that's CLOSEST to done, not the longest one (per the
+    # review: length is a poor proxy for closeness; a long hallucinated proof
+    # is much worse than a short proof with one unsolved goal). We score by
+    # Lean signals visible in the per-attempt error: fewer unsolved goals,
+    # latest successful prefix, no syntax error, no unknown identifier.
+    seed = max(candidates, key=_closeness_score)
 
     current_proof = seed.proof
     current_error = seed.error
