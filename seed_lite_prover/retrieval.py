@@ -38,7 +38,11 @@ class IndexedFact:
 
 _MATHLIB: list[IndexedFact] | None = None
 _IDF: dict[str, float] | None = None
-_DEFAULT_INDEX = Path("benchmarks/mathlib_index.jsonl")
+# Repo-root anchored, NOT CWD-relative — fixes the silent retrieval-disabled
+# bug when running from a different working directory. Resolves to
+# .../okay123/benchmarks/mathlib_index.jsonl regardless of where Python is invoked.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_INDEX = _REPO_ROOT / "benchmarks" / "mathlib_index.jsonl"
 
 
 def _load_mathlib(path: Path = _DEFAULT_INDEX) -> list[IndexedFact]:
@@ -46,6 +50,13 @@ def _load_mathlib(path: Path = _DEFAULT_INDEX) -> list[IndexedFact]:
     if _MATHLIB is not None:
         return _MATHLIB
     facts: list[IndexedFact] = []
+    if not path.exists():
+        print(
+            f"[retrieval] WARNING: index not found at {path}. "
+            f"Variant D will fall back to cache-only retrieval. "
+            f"Run `python scripts/build_mathlib_index.py` to regenerate.",
+            flush=True,
+        )
     if path.exists():
         with path.open() as f:
             for line in f:
@@ -68,6 +79,8 @@ def _load_mathlib(path: Path = _DEFAULT_INDEX) -> list[IndexedFact]:
             df[s] += 1
     n = max(1, len(facts))
     _IDF = {s: math.log((n + 1) / (c + 1)) + 1.0 for s, c in df.items()}
+    if facts:
+        print(f"[retrieval] loaded {n} Mathlib decls from {path}", flush=True)
     return facts
 
 

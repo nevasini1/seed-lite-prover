@@ -81,6 +81,8 @@ def decompose_and_prove(
     problem: LeanProblem,
     depth: int = 0,
 ) -> tuple[bool, str, list["ProofAttempt"]]:
+    import time as _t  # used by deadline-aware Ollama timeouts + recursion budget
+
     from .orchestrator import ProofAttempt
 
     attempts: list[ProofAttempt] = []
@@ -99,7 +101,12 @@ def decompose_and_prove(
         num_predict=3072,
         chat=True,
     )
-    raw = orc.ollama.generate(req)
+    # Hard per-call timeout based on remaining deadline.
+    deadline_for_planner = getattr(orc, "_deadline", None)
+    per_call_timeout = None
+    if deadline_for_planner is not None:
+        per_call_timeout = max(1.0, deadline_for_planner - _t.time())
+    raw = orc.ollama.generate(req, timeout=per_call_timeout)
     haves = _parse_have_chain(raw, orc.v.decomp_max_lemmas)
     if len(haves) < 2:
         return False, "", attempts
@@ -124,7 +131,6 @@ def decompose_and_prove(
         ollama=orc.ollama,
     )
 
-    import time as _t
     deadline = getattr(orc, "_deadline", None)
 
     proven: list[tuple[str, str, str]] = []  # (name, type, body)

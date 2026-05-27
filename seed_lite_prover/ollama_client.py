@@ -42,10 +42,15 @@ class OllamaClient:
         self.host = host.rstrip("/")
         self.timeout = timeout
 
-    def generate(self, req: GenerateRequest) -> str:
-        """Returns the model's textual output (chat: content only)."""
+    def generate(self, req: GenerateRequest, timeout: float | None = None) -> str:
+        """Returns the model's textual output (chat: content only).
+
+        `timeout`: per-call wall-clock cap. If unset, falls back to the
+        constructor `timeout`. Callers with a deadline should pass
+        `max(1, deadline - time.time())` to bound the call.
+        """
         if req.chat:
-            return self.chat(req).content
+            return self.chat(req, timeout=timeout).content
         body = {
             "model": req.model,
             "prompt": req.prompt,
@@ -57,9 +62,9 @@ class OllamaClient:
                 "stop": list(req.stop),
             },
         }
-        return self._post_json("/api/generate", body)["response"]
+        return self._post_json("/api/generate", body, timeout=timeout)["response"]
 
-    def chat(self, req: GenerateRequest) -> ChatResponse:
+    def chat(self, req: GenerateRequest, timeout: float | None = None) -> ChatResponse:
         messages = []
         if req.system:
             messages.append({"role": "system", "content": req.system})
@@ -75,7 +80,7 @@ class OllamaClient:
                 "stop": list(req.stop),
             },
         }
-        out = self._post_json("/api/chat", body)
+        out = self._post_json("/api/chat", body, timeout=timeout)
         msg = out.get("message", {}) or {}
         return ChatResponse(
             content=msg.get("content", "") or "",
@@ -90,15 +95,16 @@ class OllamaClient:
     def unload(self, model: str) -> None:
         self._post_json("/api/generate", {"model": model, "keep_alive": 0})
 
-    def _post_json(self, path: str, body: dict) -> dict:
+    def _post_json(self, path: str, body: dict, timeout: float | None = None) -> dict:
         data = json.dumps(body).encode()
         request = urllib.request.Request(
             self.host + path,
             data=data,
             headers={"Content-Type": "application/json"},
         )
+        effective_timeout = self.timeout if timeout is None else max(1.0, timeout)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(request, timeout=effective_timeout) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"Ollama {path} {e.code}: {e.read().decode()[:300]}") from e

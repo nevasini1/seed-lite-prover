@@ -1,0 +1,31 @@
+[project]
+name = "seed-lite-prover"
+version = "0.1.0"
+description = "Seed-Prover-1.5-inspired test-time orchestration wrapper around small local Lean provers — runs on a 16 GB MacBook with no GPU training."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "nevasini1" }]
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+# Runtime requirements NOT installable from PyPI:
+#   - Lean 4.29.1 + Mathlib v4.29.1 (managed by `elan` in lean_project/)
+#   - leanprover-community/repl v4.29.0-rc8 (cloned by lean_project bootstrap)
+#   - Ollama 0.24.0+ (Homebrew or https://ollama.com)
+#   - The two pulled models:
+#       zeyu-zheng/BFS-Prover-V2-7B:q8_0
+#       hf.co/mradermacher/Kimina-Prover-RL-1.7B-GGUF:Q8_0
+# See README "Reproduce" for the full bring-up.
+
+[project.urls]
+Repository = "https://github.com/nevasini1/seed-lite-prover"
+Issues = "https://github.com/nevasini1/seed-lite-prover/issues"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["seed_lite_prover"]

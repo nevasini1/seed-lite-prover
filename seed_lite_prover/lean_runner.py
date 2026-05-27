@@ -87,12 +87,52 @@ class LeanRunner:
         return self._repl.apply_tactic(proof_state, tactic)
 
     def check(self, lean_source: str, preamble: str = "") -> LeanResult:
+        """Strict acceptance check: `ok=True` requires zero errors, zero
+        `sorry`/`admit` placeholders in the source, and zero sorries in the
+        REPL response. Use this for ANY candidate proof you'd accept as a
+        Lean-verified solve. For parse-only shape validation use
+        `check_parses` instead."""
         # In REPL mode the preamble (imports + opens) was applied at warmup.
         # In subprocess mode we still allow per-check preamble (kept "" by
         # default; MiniF2F problems carry their own header in lean_source).
         if self._repl is not None:
             return self._repl.check(lean_source)
         return self._subprocess_check(lean_source, preamble)
+
+    def check_parses(self, lean_source: str, preamble: str = "") -> bool:
+        """Lenient parse-only check: returns True if `lean_source` typechecks
+        with no Lean errors, IGNORING the presence of `sorry`/`admit`. Use
+        this for shape validation (does this statement type-check?) — NEVER
+        for accepting a candidate proof.
+        """
+        if self._repl is not None:
+            return self._repl.check_parses(lean_source)
+        # Subprocess: same as strict check but ignore the sorry-rejection.
+        import os, re as _re
+        full = preamble + lean_source
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".lean", dir=self.project_dir, delete=False,
+        ) as f:
+            f.write(full)
+            path = Path(f.name)
+        env = os.environ.copy()
+        elan_bin = str(Path.home() / ".elan" / "bin")
+        if elan_bin not in env.get("PATH", ""):
+            env["PATH"] = elan_bin + os.pathsep + env.get("PATH", "")
+        try:
+            proc = subprocess.run(
+                ["lake", "env", "lean", str(path)],
+                cwd=self.project_dir, capture_output=True, text=True,
+                timeout=self.timeout_s, env=env,
+            )
+            return proc.returncode == 0 and "error:" not in proc.stderr.lower()
+        except subprocess.TimeoutExpired:
+            return False
+        finally:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
 
     def close(self) -> None:
         if self._repl is not None:
@@ -125,7 +165,21 @@ class LeanRunner:
                 env=env,
             )
             stderr = proc.stderr
-            ok = proc.returncode == 0 and "error:" not in stderr.lower()
+            # SOUNDNESS: a proof containing `sorry` or `admit` is NOT valid.
+            # `lake env lean` emits a *warning* ("declaration uses 'sorry'")
+            # but exits 0; without these checks `ok` would be True. Reject
+            # both the source-level keyword and Lean's own warning text.
+            import re as _re
+            source_has_sorry = bool(_re.search(r"\b(sorry|admit)\b", lean_source))
+            warns_sorry = "uses 'sorry'" in (stderr.lower() + " " + proc.stdout.lower())
+            ok = (
+                proc.returncode == 0
+                and "error:" not in stderr.lower()
+                and not source_has_sorry
+                and not warns_sorry
+            )
+            if source_has_sorry or warns_sorry:
+                stderr = "error: proof contains `sorry`/`admit`\n" + stderr
             return LeanResult(ok=ok, stdout=proc.stdout, stderr=stderr, elapsed_s=time.time() - start)
         except subprocess.TimeoutExpired as e:
             return LeanResult(

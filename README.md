@@ -49,6 +49,41 @@ The two new closers added today (`case_closer.py`, `tail_closer` inside it) are 
 
 ---
 
+## Soundness & methodology — recent fixes
+
+A code review (2026-05-27) surfaced one critical soundness bug and several methodology gaps. The fixes below were applied; **prior measured results were re-validated and stand** because the symbolic preamble's `omega`/`ring_nf`/`simp` tactics don't insert `sorry`, and the empirical wins via `case_closer`/`tail_closer` were always full Lean-verified proofs.
+
+| # | Issue | Fix |
+|---|---|---|
+| 1 | **`sorry` could be accepted as a successful proof** — `LeanRunner.check()` only counted `error:` lines; `sorry` produces a warning, so a snippet containing it passed `ok=True`. | `lean_runner.check` and `lean_repl.check` now reject any source containing `\b(sorry\|admit)\b` *and* any REPL response with non-empty `sorries`. `parses_as_type` / `parses_in_parent` use a new lenient `check_parses` for shape-only validation. The replan path that auto-appended `:= by sorry` to `have` lines is **removed**. Verified by sanity test: `theorem t (n : Nat) : n + 0 = n := by sorry` → `ok=False`. |
+| 2 | **Lemma cache was shared across ablation variants** in the same run, contaminating A/B/C/D/E/F comparisons. | `run_ablation.py` now has a `--cache-mode {isolated, shared, frozen, none}` flag, default **isolated** — a fresh empty cache per variant. Each variant's start logs `cache_entries=N`. |
+| 3 | **REPL `readline()` could block forever** even with a deadline check that only fired after a line arrived. | `lean_repl._send` now wraps the read in `select.select(…, timeout=remaining)` so the deadline is *actually* enforced. |
+| 4 | **Ollama calls had no per-deadline timeout** — `OllamaClient.generate/chat` used the constructor's global timeout regardless of how little budget remained. | `generate()` and `chat()` now take a `timeout=` kwarg. `repair.py` and `decompose.py` compute `remaining = deadline - time.time()` and pass it. |
+| 5 | **MiniF2F fetcher pulled the current upstream HEAD** instead of a pinned commit. | `scripts/fetch_minif2f.sh` now pins `MINIF2F_REF=5746b7d6c47855ce1294bed87329618ff7f1bc31`; overridable via env var if needed. |
+| 6 | **No Python dependency manifest, no per-run metadata header**. | Added `pyproject.toml`. Every ablation JSONL now starts with a `_type: run_metadata` line containing git SHA + dirty flag, Lean version, lean-toolchain, Mathlib rev, Python version, platform, model tags, backend, timeouts, cache-mode, benchmark commit, matrix file hash, and the variant list. |
+| 7 | **Retrieval index path was CWD-relative** — running from a different directory silently disabled retrieval. | `retrieval.py` now anchors `_DEFAULT_INDEX` at the repo root via `Path(__file__).resolve().parents[1]`; logs whether the index loaded and how many decls. |
+| 8 | **README claimed "BM25"** but `retrieval.py` is symbol-set overlap with IDF weighting, not real BM25 (no term-frequency, no document-length normalization). | Wording corrected throughout the README. |
+
+### Honest reframing of attribution
+
+The empirical record on this hardware so far is:
+
+- **Symbolic preamble + best-of-N whole_proof** carries the vast majority of wins (28 + 12 across the project history).
+- **Two ~130-line mechanical patchers I wrote** (`case_closer`, `tail_closer`) earned 3 unique wins that the rest couldn't.
+- **The LLM-driven agentic components** (bfs_search, decomposition, repair) earned **zero unique wins**. They are engineered and they fire; they have not yet closed a problem that the cheaper steps missed.
+
+So the project's headline is more accurately:
+
+> A cheap Lean tactic preamble plus mechanical near-miss patching, plus a persistent Lean REPL, lifts a small local prover on induction-style slices.
+
+And **not yet**:
+
+> LLM-guided search, retrieval, decomposition, and repair produce meaningful lift.
+
+The remaining open work (in *Next steps*) is to make F's LLM-driven repair actually fire at scale — that's the real test of the agentic-loop claim.
+
+---
+
 ## Final results table
 
 Every measurable result in one place. All numbers are **same model, same hardware (Apple M3 16 GB), no training**, Lean 4.29.1 + Mathlib v4.29.1, `import Mathlib` preamble. Pass-rate = Lean-verified solves / problems attempted.
@@ -168,7 +203,7 @@ Each variant runs the following pipeline against one Lean theorem; the first ste
                                              ▼  no
                 ┌──────────────────────────────────────────────────────┐
                 │ Step 4: retrieval (variants D/E/F)                   │
-                │ BM25 + symbol overlap over:                          │
+                │ Symbol-set overlap with IDF weighting over:          │
                 │   • 141 k Mathlib decls (build_mathlib_index.py)     │
                 │   • verified-lemma cache (results/verified_lemmas)   │
                 │ Inject top-k lemma names+statements into BFS prompt. │
@@ -281,7 +316,7 @@ flowchart LR
         WP[whole_proof attempt]
         CC[case_closer.py<br/>mechanical patcher]
         TS[tactic_search.py<br/>+ proof_tree.py]
-        RET[retrieval.py<br/>BM25 over Mathlib]
+        RET[retrieval.py<br/>symbol-overlap + IDF<br/>over Mathlib]
         DEC[decompose.py<br/>Kimina have-chain]
         REP[repair.py<br/>targeted + replan]
     end
@@ -419,7 +454,7 @@ seed-lite-prover/
 │   ├── case_closer.py       ← mechanical near-miss patcher (the new lift mechanism)
 │   ├── tactic_search.py     ← state-aware Lean-REPL BFS via proof_tree
 │   ├── proof_tree.py        ← BFS-Prover-V2 search tree, LeanDojo-free port
-│   ├── retrieval.py         ← BM25 over Mathlib + lemma cache
+│   ├── retrieval.py         ← symbol-overlap + IDF over Mathlib + lemma cache (NOT true BM25)
 │   ├── decompose.py         ← Kimina have-chain decomposition
 │   ├── repair.py            ← targeted patch + Dynamic Replanning
 │   ├── lean_runner.py       ← REPL-or-subprocess Lean backend

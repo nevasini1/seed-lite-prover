@@ -116,7 +116,11 @@ def repair_last_failure(
             chat=True,
             stop=("\ntheorem ", "\nexample ", "\nlemma "),
         )
-        chat_resp = orc.ollama.chat(req)
+        # Hard per-call timeout based on remaining deadline.
+        per_call_timeout = None
+        if deadline is not None:
+            per_call_timeout = max(1.0, deadline - _t.time())
+        chat_resp = orc.ollama.chat(req, timeout=per_call_timeout)
         repaired = _clean(chat_resp.content)
         if not repaired and chat_resp.thinking:
             # Kimina spent all its budget thinking; nothing actionable. Skip.
@@ -128,17 +132,15 @@ def repair_last_failure(
             break
         repaired = _strip_common_indent(repaired)
 
-        # If the replan returned a have-chain (one or more `have <name> :`
-        # signatures with no proofs), we wrap them with `sorry` so each is
-        # at least syntactically a body. Real proving is the next pass's job.
-        if is_final and "have " in repaired and "by" not in repaired:
-            repaired_lines = []
-            for ln in repaired.splitlines():
-                if ln.strip().startswith("have ") and ":=" not in ln:
-                    repaired_lines.append(ln + " := by sorry")
-                else:
-                    repaired_lines.append(ln)
-            repaired = "\n".join(repaired_lines)
+        # NOTE (soundness): a previous version of this code appended
+        # `:= by sorry` to unproved `have` signatures from the replan output,
+        # then submitted the snippet for acceptance. That was unsound — a
+        # have-chain ending in `sorry` is not a Lean-verified proof. The
+        # strict `lean.check` now rejects any source containing `sorry`,
+        # but we also drop the auto-sorry-injection here so we never emit
+        # such snippets in the first place. If the replan returns a bare
+        # have-chain (no `by`), the strict check below will fail it; that
+        # is the correct behaviour.
 
         snippet = wrap(problem, repaired)
         res = orc.lean.check(snippet)

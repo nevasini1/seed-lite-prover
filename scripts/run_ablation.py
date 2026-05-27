@@ -123,6 +123,18 @@ def main() -> int:
         default=None,
         help="Optional BFS-Prover-V2-style statements JSONL; takes precedence over --benchmark.",
     )
+    parser.add_argument(
+        "--cache-mode",
+        default="isolated",
+        choices=["isolated", "shared", "frozen", "none"],
+        help=(
+            "How to handle the verified-lemma cache across variants:\n"
+            "  isolated (default)  fresh empty cache per variant — clean A/B/C/F comparisons\n"
+            "  shared              one cache shared across all variants this run (legacy behaviour)\n"
+            "  frozen              start from the existing global cache, read-only (no writes)\n"
+            "  none                no cache at all (variants can't write or read)"
+        ),
+    )
     args = parser.parse_args()
 
     variants, models = load_variants(Path(args.matrix))
@@ -149,12 +161,87 @@ def main() -> int:
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
     lean = LeanRunner(args.lean_project, timeout_s=args.lean_timeout)
-    cache = LemmaCache(ROOT / "results" / "verified_lemmas.jsonl")
     ollama = OllamaClient()
 
+    # --- Reproducibility metadata header --------------------------------------
+    # Written as the first line of BOTH summary and attempts JSONL so any
+    # downstream analysis can recover exactly what produced these numbers.
+    import subprocess as _sp, platform as _plat, hashlib as _hash
+    def _capture(cmd: list[str], cwd: str | None = None) -> str:
+        try:
+            return _sp.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=10).stdout.strip()
+        except Exception:
+            return ""
+
+    def _file_hash(p: Path) -> str:
+        if not p.exists():
+            return "missing"
+        h = _hash.sha256()
+        with p.open("rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()[:16]
+
+    metadata = {
+        "_type": "run_metadata",
+        "timestamp": ts,
+        "git_sha": _capture(["git", "rev-parse", "HEAD"], cwd=str(ROOT)),
+        "git_dirty": bool(_capture(["git", "status", "--porcelain"], cwd=str(ROOT))),
+        "lean_version": _capture(["lean", "--version"]),
+        "lean_toolchain": (Path(args.lean_project) / "lean-toolchain").read_text().strip() if (Path(args.lean_project) / "lean-toolchain").exists() else "",
+        "mathlib_rev": _capture(["git", "rev-parse", "HEAD"], cwd=str(Path(args.lean_project) / ".lake" / "packages" / "mathlib")) if (Path(args.lean_project) / ".lake" / "packages" / "mathlib" / ".git").exists() else "",
+        "python_version": _plat.python_version(),
+        "platform": _plat.platform(),
+        "prover_model": models["prover"],
+        "helper_model": models["helper"],
+        "lean_backend": lean.backend,
+        "lean_timeout_s": args.lean_timeout,
+        "problem_budget_s": args.problem_budget_s,
+        "cache_mode": args.cache_mode,
+        "benchmark": bench_label,
+        "n_problems": len(problems),
+        "variants": keys,
+        "matrix_hash": _file_hash(Path(args.matrix)),
+    }
+    print(f"[runner] metadata: git={metadata['git_sha'][:8]} lean={metadata['lean_version'][:40]} backend={metadata['lean_backend']}", flush=True)
+    # --- end metadata header --------------------------------------------------
+
+    def _make_cache_for_variant(vk: str) -> LemmaCache:
+        """Per `--cache-mode`, build a fresh / shared / frozen / no-op cache."""
+        global_path = ROOT / "results" / "verified_lemmas.jsonl"
+        if args.cache_mode == "shared":
+            return LemmaCache(global_path)
+        if args.cache_mode == "isolated":
+            iso_path = ROOT / "results" / f"verified_lemmas_{ts}_{vk}.jsonl"
+            iso_path.unlink(missing_ok=True)
+            return LemmaCache(iso_path)
+        if args.cache_mode == "frozen":
+            # Read-only proxy: load existing cache but discard appends.
+            cache = LemmaCache(global_path)
+            cache.append = lambda lemma: None  # type: ignore[method-assign]
+            return cache
+        if args.cache_mode == "none":
+            # No-op cache: returns empty load() and discards append().
+            null_path = ROOT / "results" / f"verified_lemmas_null_{ts}_{vk}.jsonl"
+            null_path.unlink(missing_ok=True)
+            cache = LemmaCache(null_path)
+            cache.append = lambda lemma: None  # type: ignore[method-assign]
+            cache.load = lambda: []  # type: ignore[method-assign]
+            return cache
+        raise ValueError(f"unknown cache-mode: {args.cache_mode}")
+
+    print(f"[runner] cache-mode={args.cache_mode}  lean-backend={lean.backend}  ts={ts}", flush=True)
+
     with summary_path.open("a") as sf, attempts_path.open("a") as af:
+        sf.write(json.dumps(metadata) + "\n")
+        sf.flush()
+        af.write(json.dumps(metadata) + "\n")
+        af.flush()
         for vk in keys:
             variant = variants[vk]
+            cache = _make_cache_for_variant(vk)
+            cache_entries = len(cache.load())
+            print(f"[runner] starting {vk!r} ({variant.name})  cache_entries={cache_entries}", flush=True)
             orc = Orchestrator(
                 variant=variant,
                 prover_model=models["prover"],

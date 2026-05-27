@@ -107,8 +107,9 @@ def wrap_stmt(header: str, name: str, statement: str, body: str, kw: str = "theo
 def parses_as_type(runner: "LeanRunner", header: str, statement: str) -> bool:
     """Does `<header>\\n example <statement> := by sorry` parse?
 
-    `sorry` triggers a warning (not an error), so Lean accepts it. If the
-    statement is fundamentally malformed, we see an `error:` in stderr.
+    Uses `runner.check_parses` (the lenient mode) — `sorry` is the marker
+    we WANT here, not a rejected placeholder. This is a parse-only shape
+    check, never used to accept a candidate proof.
     """
     stmt = statement.strip()
     if not stmt or ":=" in stmt or "\n" in stmt:
@@ -116,22 +117,16 @@ def parses_as_type(runner: "LeanRunner", header: str, statement: str) -> bool:
     h = header.rstrip()
     head = (h + "\n\n") if h else ""
     snippet = f"{head}example {stmt} := by\n  sorry\n"
-    res = runner.check(snippet)
-    return res.ok
+    return runner.check_parses(snippet)
 
 
 def parses_in_parent(runner: "LeanRunner", problem: "LeanProblem", have_name: str, have_type: str) -> bool:
-    """Stricter check: does `have <name> : <type> := by sorry` typecheck
-    INSIDE the parent theorem body?
-
-    This catches issues `parses_as_type` misses — namespace-context mismatches,
-    implicit-binder shadowing, and other things that depend on being inside
-    the goal context, not at top-level.
+    """Stricter parse check: does `have <name> : <type> := by sorry`
+    typecheck INSIDE the parent theorem body? Lenient (allows `sorry`).
     """
     typ = have_type.strip()
     if not typ or ":=" in typ or "\n" in typ:
         return False
     body = f"have {have_name} : {typ} := by sorry\n  sorry"
     snippet = wrap(problem, body)
-    res = runner.check(snippet)
-    return res.ok
+    return runner.check_parses(snippet)

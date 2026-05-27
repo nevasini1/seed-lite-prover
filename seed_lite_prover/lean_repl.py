@@ -176,17 +176,41 @@ class LeanRepl:
         elapsed = time.time() - t0
         errors = [m for m in res.messages if m.get("severity") == "error"]
         warnings = [m for m in res.messages if m.get("severity") == "warning"]
-        ok = len(errors) == 0
+        # SOUNDNESS: a proof containing `sorry` or `admit` is NOT a valid proof.
+        # Lean only emits a warning for `sorry`, so ok would be True without
+        # this check. We also reject the source-level appearance of `sorry`
+        # or `admit` as a final defensive layer.
+        sorry_count = len(res.sorries)
+        source_has_sorry = bool(re.search(r"\b(sorry|admit)\b", body))
+        ok = (len(errors) == 0) and (sorry_count == 0) and (not source_has_sorry)
         stdout = json.dumps(res.raw)
         stderr_parts = []
+        if sorry_count > 0:
+            stderr_parts.append(f"error: proof contains {sorry_count} `sorry` placeholder(s)")
+        if source_has_sorry and sorry_count == 0:
+            stderr_parts.append("error: source contains `sorry` or `admit` keyword")
         for m in errors + warnings:
             sev = m.get("severity", "")
             msg = m.get("data", "")
             pos = m.get("pos", {})
             stderr_parts.append(f"{sev}: line {pos.get('line', '?')}: {msg}")
-        # Mirror lean_runner's convention: "error:" in stderr means failure.
         stderr = "\n".join(stderr_parts)
         return LeanResult(ok=ok, stdout=stdout, stderr=stderr, elapsed_s=elapsed)
+
+    def check_parses(self, lean_source: str, preamble_env: int | None = None) -> bool:
+        """Lenient: returns True if `lean_source` typechecks with no Lean
+        ERRORS. Allows `sorry`/`admit` (for parse-only shape validation).
+        Never use this on a candidate proof you'd accept."""
+        env = preamble_env if preamble_env is not None else self._warmup_env
+        body = _strip_file_header(lean_source)
+        req: dict[str, Any] = {"cmd": body}
+        if env is not None:
+            req["env"] = env
+        try:
+            res = self._send(req)
+        except Exception:
+            return False
+        return not any(m.get("severity") == "error" for m in res.messages)
 
     def start_proof(self, theorem_decl: str) -> ProofState:
         """Submit `<theorem_decl> := by sorry` and return the initial proof
@@ -261,7 +285,13 @@ class LeanRepl:
     # -- internals -----------------------------------------------------------
 
     def _send(self, request: dict[str, Any]) -> _ReplResult:
-        """Send one JSON request, read one JSON response."""
+        """Send one JSON request, read one JSON response.
+
+        Uses `select` to make the read truly time-bounded — `readline()`
+        alone would block indefinitely if the REPL hangs without emitting.
+        """
+        import select as _select
+
         if self.proc.poll() is not None:
             raise RuntimeError(f"repl process died (exit {self.proc.returncode})")
         assert self.proc.stdin is not None and self.proc.stdout is not None
@@ -274,8 +304,14 @@ class LeanRepl:
         buf: list[str] = []
         deadline = time.time() + self.timeout_s
         while True:
-            if time.time() > deadline:
+            remaining = deadline - time.time()
+            if remaining <= 0:
                 raise TimeoutError(f"repl read timeout after {self.timeout_s}s")
+            ready, _, _ = _select.select([self.proc.stdout], [], [], remaining)
+            if not ready:
+                raise TimeoutError(
+                    f"repl read timeout after {self.timeout_s}s (no data within deadline)"
+                )
             ln = self.proc.stdout.readline()
             if not ln:
                 raise RuntimeError("repl stdout closed unexpectedly")
