@@ -1,0 +1,6 @@
+api = "ollama"
+model = "zeyu-zheng/BFS-Prover-V2-7B:q8_0"
+mode = "parallel"
+prompt = "tacticstate"
+responseFormat = "tactic"
+numSamples = "5"

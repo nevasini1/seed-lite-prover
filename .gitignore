@@ -1,0 +1,29 @@
+# Lean build artifacts (7 GB of .olean files — pulled from cache by `lake exe cache get`)
+lean_project/.lake/
+lean_project/lake-manifest.json
+lean_project/lean-toolchain
+lean_project/.github/
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# macOS
+.DS_Store
+
+# Downloaded data (not ours to redistribute — use scripts/fetch_minif2f.sh and
+# scripts/build_mathlib_index.py to regenerate locally)
+benchmarks/minif2f_valid/*.lean
+benchmarks/mathlib_index.jsonl
+
+# Ablation logs — kept locally for traceability, not useful in the repo
+results/*.log
+results/ollama_pull_*.log
+results/elan_install.log
+results/mathlib_index_build.log
+results/verified_lemmas.jsonl
+
+# Plan / scratch files outside the repo path
+/tmp/

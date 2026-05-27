@@ -1,0 +1,12 @@
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 0, "source": "symbolic:simp_all", "proof_head": "simp_all", "ok": false, "error_head": "", "elapsed_s": 35.907368898391724}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 1, "source": "symbolic:norm_num", "proof_head": "norm_num", "ok": false, "error_head": "", "elapsed_s": 21.97741198539734}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 2, "source": "symbolic:omega", "proof_head": "omega", "ok": false, "error_head": "", "elapsed_s": 12.559221744537354}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 3, "source": "symbolic:linarith", "proof_head": "linarith", "ok": false, "error_head": "", "elapsed_s": 23.457823991775513}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 4, "source": "symbolic:nlinarith", "proof_head": "nlinarith", "ok": false, "error_head": "", "elapsed_s": 21.086554765701294}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 5, "source": "symbolic:ring_nf", "proof_head": "ring_nf", "ok": false, "error_head": "", "elapsed_s": 26.45894765853882}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 6, "source": "symbolic:field_simp", "proof_head": "field_simp", "ok": false, "error_head": "", "elapsed_s": 10.041974067687988}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 7, "source": "symbolic:aesop", "proof_head": "aesop", "ok": false, "error_head": "", "elapsed_s": 10.040696144104004}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 8, "source": "symbolic:positivity", "proof_head": "positivity", "ok": false, "error_head": "", "elapsed_s": 25.117183208465576}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 9, "source": "symbolic:tauto", "proof_head": "tauto", "ok": false, "error_head": "", "elapsed_s": 32.00298094749451}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 10, "source": "symbolic:decide", "proof_head": "decide", "ok": false, "error_head": "", "elapsed_s": 60.014729022979736}
+{"variant": "A", "variant_name": "one_shot", "problem": "aimeII_2001_p3", "idx": 11, "source": "whole_proof", "proof_head": "have h\u2081 := h\u2086 5 (by omega)\n  simp_all [sub_eq_add_neg, add_assoc]", "ok": false, "error_head": "timeout after 60.0s", "elapsed_s": 85.45485401153564}

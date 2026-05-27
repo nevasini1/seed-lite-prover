@@ -1,0 +1,2 @@
+{"variant": "A", "variant_name": "one_shot", "problem": "add_comm", "statement": "(a b : Nat) : a + b = b + a", "solved": false, "attempts": 11, "elapsed_s": 120.33935499191284, "winning_source": ""}
+{"variant": "A", "variant_name": "one_shot", "problem": "mul_zero", "statement": "(a : Nat) : a * 0 = 0", "solved": false, "attempts": 11, "elapsed_s": 277.3798899650574, "winning_source": ""}

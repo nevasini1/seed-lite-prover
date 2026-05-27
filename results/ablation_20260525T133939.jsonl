@@ -1,0 +1,4 @@
+{"variant": "A", "variant_name": "one_shot", "problem": "induction_divisibility_3div2tooddnp1", "statement": "(n : \u2115) : 3 \u2223 2 ^ (2 * n + 1) + 1", "solved": false, "attempts": 15, "elapsed_s": 11.049767971038818, "winning_source": ""}
+{"variant": "A", "variant_name": "one_shot", "problem": "induction_divisibility_3divnto3m2n", "statement": "(n : \u2115) : 3 \u2223 n ^ 3 + 2 * n", "solved": false, "attempts": 15, "elapsed_s": 5.551311016082764, "winning_source": ""}
+{"variant": "A", "variant_name": "one_shot", "problem": "induction_divisibility_9div10tonm1", "statement": "(n : \u2115) (h\u2080 : 0 < n) : 9 \u2223 10 ^ n - 1", "solved": false, "attempts": 15, "elapsed_s": 3.1995699405670166, "winning_source": ""}
+{"variant": "A", "variant_name": "one_shot", "problem": "induction_ineq_nsqlefactn", "statement": "(n : \u2115) (h\u2080 : 4 \u2264 n) : n ^ 2 \u2264 n !", "solved": false, "attempts": 15, "elapsed_s": 3.247227668762207, "winning_source": ""}

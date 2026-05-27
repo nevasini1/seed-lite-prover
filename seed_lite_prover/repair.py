@@ -1,0 +1,158 @@
+"""Error-aware repair loop.
+
+Two phases:
+1. Targeted fix — feed (failing proof, Lean error) to Kimina, ask for the
+   minimal correction. Up to `repair_max_rounds - 1` rounds.
+2. Dynamic Replanning (final round) — switch to the BFS-Prover-V2-style
+   replan prompt: produce a fresh have-chain that bridges the existing
+   progress to the goal. Adapted from
+   `ByteDance-Seed/BFS-Prover-V2/src/plan/prompt.yaml` (Apache-2.0).
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+from .bfs_prover_prompts import REPLAN_TEMPLATE
+from .lean_snippets import LeanProblem, indent, wrap
+from .ollama_client import GenerateRequest
+
+if TYPE_CHECKING:
+    from .orchestrator import Orchestrator, ProofAttempt
+
+
+_REPAIR_PROMPT = """The following Lean 4 proof of
+
+  {kw} {name} {statement} := by
+
+failed.
+
+Proof body:
+{proof}
+
+Lean error:
+{error}
+
+Modify ONLY the failing part. Return the full corrected proof body, no
+fences, no commentary, no leading `theorem ... := by` line.
+"""
+
+
+_FENCE_LEAD = re.compile(r"^```(?:lean)?\s*", re.IGNORECASE)
+_FENCE_TAIL = re.compile(r"\s*```\s*$")
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _clean(raw: str) -> str:
+    raw = _THINK_BLOCK.sub("", raw)
+    raw = _FENCE_LEAD.sub("", raw.strip())
+    raw = _FENCE_TAIL.sub("", raw)
+    return raw.rstrip()
+
+
+def _strip_common_indent(body: str) -> str:
+    """If every non-empty line starts with the same leading whitespace, drop it.
+    Avoids feeding double-indented bodies through `wrap()`'s own indenter."""
+    lines = body.splitlines()
+    nonempty = [ln for ln in lines if ln.strip()]
+    if not nonempty:
+        return body
+    common = min(len(ln) - len(ln.lstrip(" ")) for ln in nonempty)
+    if common == 0:
+        return body
+    return "\n".join((ln[common:] if ln.strip() else ln) for ln in lines)
+
+
+def repair_last_failure(
+    orc: "Orchestrator",
+    problem: LeanProblem,
+    prior_attempts: list["ProofAttempt"],
+) -> tuple[bool, str, list["ProofAttempt"]]:
+    from .orchestrator import ProofAttempt
+
+    out: list[ProofAttempt] = []
+
+    candidates = [a for a in prior_attempts if not a.ok and a.error and a.proof.strip()]
+    if not candidates:
+        return False, "", out
+    seed = max(candidates, key=lambda a: len(a.proof))
+
+    current_proof = seed.proof
+    current_error = seed.error
+
+    import time as _t
+    deadline = getattr(orc, "_deadline", None)
+
+    for round_idx in range(orc.v.repair_max_rounds):
+        if deadline is not None and _t.time() > deadline:
+            break
+        is_final = round_idx == orc.v.repair_max_rounds - 1
+        if is_final:
+            # Final round: escalate to Dynamic Replanning instead of another
+            # targeted patch. Ask for a fresh have-chain that connects
+            # progress to the goal. We feed `current_proof` (the
+            # most-recent failing body) as the "stuck subgoal" context.
+            prompt = REPLAN_TEMPLATE.format(
+                theorem=f"{problem.keyword} {problem.name} {problem.statement} := by",
+                proven_subgoals="(none — repair could not isolate proven steps)",
+                stuck_subgoal=current_proof,
+            )
+            req_source = "repair:replan"
+        else:
+            prompt = _REPAIR_PROMPT.format(
+                kw=problem.keyword,
+                name=problem.name,
+                statement=problem.statement,
+                proof=current_proof,
+                error=current_error[:1500],
+            )
+            req_source = f"repair:r{round_idx}"
+        req = GenerateRequest(
+            model=orc.helper_model,
+            prompt=prompt,
+            temperature=0.3 if is_final else 0.2,
+            num_predict=3072,
+            chat=True,
+            stop=("\ntheorem ", "\nexample ", "\nlemma "),
+        )
+        chat_resp = orc.ollama.chat(req)
+        repaired = _clean(chat_resp.content)
+        if not repaired and chat_resp.thinking:
+            # Kimina spent all its budget thinking; nothing actionable. Skip.
+            out.append(ProofAttempt(
+                proof="", ok=False, elapsed_s=0.0,
+                error="repair: empty content (only thinking)",
+                source=f"repair:r{round_idx}:empty",
+            ))
+            break
+        repaired = _strip_common_indent(repaired)
+
+        # If the replan returned a have-chain (one or more `have <name> :`
+        # signatures with no proofs), we wrap them with `sorry` so each is
+        # at least syntactically a body. Real proving is the next pass's job.
+        if is_final and "have " in repaired and "by" not in repaired:
+            repaired_lines = []
+            for ln in repaired.splitlines():
+                if ln.strip().startswith("have ") and ":=" not in ln:
+                    repaired_lines.append(ln + " := by sorry")
+                else:
+                    repaired_lines.append(ln)
+            repaired = "\n".join(repaired_lines)
+
+        snippet = wrap(problem, repaired)
+        res = orc.lean.check(snippet)
+        attempt = ProofAttempt(
+            proof=repaired,
+            ok=res.ok,
+            elapsed_s=res.elapsed_s,
+            error="" if res.ok else res.stderr[:1000],
+            source=req_source,
+        )
+        out.append(attempt)
+        if res.ok:
+            return True, repaired, out
+        current_proof = repaired
+        current_error = res.stderr
+
+    return False, "", out

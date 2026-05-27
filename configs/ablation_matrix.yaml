@@ -1,0 +1,85 @@
+# Variants for scripts/run_ablation.py
+# Each row keeps the SAME models — only the wrapper changes.
+variants:
+  A:
+    name: one_shot
+    samples: 1
+    use_search: false
+    use_retrieval: false
+    use_decomposition: false
+    use_repair: false
+  A6:
+    name: best_of_6
+    samples: 6
+    use_search: false
+    use_retrieval: false
+    use_decomposition: false
+    use_repair: false
+  B:
+    name: best_of_32
+    samples: 32
+    use_search: false
+    use_retrieval: false
+    use_decomposition: false
+    use_repair: false
+  C:
+    name: tactic_search
+    samples: 5            # per-state samples; search drives total budget
+    search_depth: 8
+    search_budget_s: 300
+    use_search: true
+    use_retrieval: false
+    use_decomposition: false
+    use_repair: false
+  D:
+    name: search_plus_retrieval
+    samples: 5
+    search_depth: 8
+    search_budget_s: 300
+    retrieval_k: 20
+    use_search: true
+    use_retrieval: true
+    use_decomposition: false
+    use_repair: false
+  E:
+    name: plus_decomposition
+    samples: 5
+    search_depth: 8
+    search_budget_s: 360
+    retrieval_k: 20
+    decomp_max_depth: 2
+    decomp_max_lemmas: 6
+    use_search: true
+    use_retrieval: true
+    use_decomposition: true
+    use_repair: false
+  F:
+    name: full_seed_lite
+    samples: 5
+    search_depth: 8
+    search_budget_s: 360
+    retrieval_k: 20
+    decomp_max_depth: 2
+    decomp_max_lemmas: 6
+    repair_max_rounds: 3
+    use_search: true
+    use_retrieval: true
+    use_decomposition: true
+    use_repair: true
+  Fmin:
+    name: seed_lite_minimal
+    samples: 3
+    search_depth: 3
+    search_budget_s: 60
+    retrieval_k: 10
+    decomp_max_depth: 1
+    decomp_max_lemmas: 3
+    repair_max_rounds: 2
+    use_search: true
+    use_retrieval: true
+    use_decomposition: true
+    use_repair: true
+
+models:
+  prover: "zeyu-zheng/BFS-Prover-V2-7B:q8_0"
+  helper: "hf.co/mradermacher/Kimina-Prover-RL-1.7B-GGUF:Q8_0"

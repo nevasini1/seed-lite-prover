@@ -1,0 +1,29 @@
+Seed-Lite-Prover
+Copyright 2026 nevasini1
+
+This product includes software developed at:
+
+- ByteDance Seed: BFS-Prover-V2 (https://github.com/ByteDance-Seed/BFS-Prover-V2)
+  Licensed under the Apache License, Version 2.0.
+  Specifically, the planner prompts in `seed_lite_prover/bfs_prover_prompts.py`
+  and the proof-tree data structure ported in `seed_lite_prover/proof_tree.py`
+  are adapted from `src/plan/prompt.yaml` and `src/search/proof_tree.py` of
+  that project, with modifications noted in the file headers.
+
+- yangky11 / miniF2F-lean4 (https://github.com/yangky11/miniF2F-lean4)
+  Licensed under the Apache License, Version 2.0.
+  This project's benchmark fetcher (`scripts/fetch_minif2f.sh`) downloads
+  validation problems from that repository at runtime. The problem files
+  themselves are not redistributed here.
+
+- leanprover-community / mathlib4 (https://github.com/leanprover-community/mathlib4)
+  Licensed under the Apache License, Version 2.0.
+  This project depends on Mathlib at runtime; `scripts/build_mathlib_index.py`
+  reads Mathlib sources to produce a retrieval index. Mathlib content is not
+  redistributed here.
+
+- leanprover-community / repl (https://github.com/leanprover-community/repl)
+  Licensed under the Apache License, Version 2.0.
+  This project's persistent Lean REPL adapter (`seed_lite_prover/lean_repl.py`)
+  drives an instance of that REPL via stdin/stdout. The REPL itself is not
+  redistributed here.
