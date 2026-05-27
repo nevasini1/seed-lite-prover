@@ -112,15 +112,27 @@ def _progress_score(parent_goals: str, child_goals: str, child_done: bool, elaps
 def _format_goal_prompt(problem: LeanProblem, goals_text: str, retrieved: str = "") -> str:
     """BFS-Prover-V2-style: explicit tactic state, no proof-prefix string.
 
-    Format approximates LeanDojo's TacticState rendering, which BFS-Prover
-    was trained on.
+    Parses `goals_text` through the structured `tactic_state` module to
+    normalise hypothesis lists and case labels — closer to the LeanDojo
+    TacticState format BFS-Prover-V2 was trained against. Falls back to the
+    raw text on any parse error.
     """
+    from . import tactic_state as _ts
+    try:
+        state = _ts.parse(goals_text)
+        normalised = state.render() if state.goal_count else (goals_text.strip() or "<no goals — proof complete?>")
+    except Exception:
+        normalised = goals_text.strip() or "<no goals — proof complete?>"
+
     parts: list[str] = []
     if retrieved:
-        parts.append("Relevant Mathlib facts:\n" + retrieved + "\n")
+        parts.append("Relevant Mathlib facts (cite by name in your tactic):\n" + retrieved + "\n")
     parts.append("Current Lean tactic state:")
-    parts.append(goals_text.strip() if goals_text.strip() else "<no goals — proof complete?>")
-    parts.append("\nProduce one Lean 4 tactic that makes progress on the FIRST goal above. Respond with the tactic only, no explanation, no code fences.")
+    parts.append(normalised)
+    parts.append(
+        "\nProduce one Lean 4 tactic that makes progress on the FIRST goal above. "
+        "Respond with the tactic only, no explanation, no code fences."
+    )
     return "\n".join(parts)
 
 
@@ -171,7 +183,20 @@ def bfs_prove(orc: "Orchestrator", problem: LeanProblem) -> tuple[bool, str, lis
             tree.finalize(node, [])
             continue
 
-        prompt = _format_goal_prompt(problem, goals_text, retrieved)
+        # Refresh retrieval against the LIVE tactic-state symbols (so the
+        # hints evolve as the proof unfolds), not just the top-line theorem.
+        node_retrieved = retrieved
+        if v.use_retrieval and goals_text:
+            try:
+                from . import tactic_state as _ts
+                from .retrieval import retrieve_for_state
+                live_state = _ts.parse(goals_text)
+                if live_state.symbols:
+                    node_retrieved = retrieve_for_state(orc, live_state.symbols, k=v.retrieval_k) or retrieved
+            except Exception:
+                pass  # fall back to top-line retrieval
+
+        prompt = _format_goal_prompt(problem, goals_text, node_retrieved)
         edges_built: list[Edge] = []
         for i in range(v.samples):
             if time.time() > deadline:

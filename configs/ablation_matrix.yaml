@@ -79,6 +79,21 @@ variants:
     use_retrieval: true
     use_decomposition: true
     use_repair: true
+  Cmax:
+    # Heavy search: 16 samples × depth 16 = up to 256 candidates per problem.
+    # This is the "give BFS-search the budget BFS-Prover-V2 actually uses"
+    # variant. With the new LeanDojo-style tactic-state surface (#4) and
+    # real BM25 retrieval (#3) feeding in, this is where the LLM components
+    # finally get a fair shot.
+    name: heavy_search
+    samples: 16
+    search_depth: 16
+    search_budget_s: 900
+    retrieval_k: 30
+    use_search: true
+    use_retrieval: true
+    use_decomposition: false
+    use_repair: false
 
 models:
   prover: "zeyu-zheng/BFS-Prover-V2-7B:q8_0"
